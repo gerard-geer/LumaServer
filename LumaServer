@@ -1,0 +1,47 @@
+import processing.net.*;
+import processing.serial.*;
+import java.io.*;
+import java.net.*;
+
+PFont serverFont;
+LumaServlet s;
+
+void setup(){
+  size(1024, 768);
+  smooth();
+  frame.setResizable(true);
+  serverFont = loadFont("ServerFont4.vlw");
+  s = new LumaServlet(this, 5000, 500, 1, serverFont, 10);
+}
+void draw(){
+  s.handle();
+}
+
+void keyPressed(){
+  if(key == 'c' || key == 'C'){
+    s.changeState(0);
+  }
+  if(key == 's' || key == 'S'){
+    s.changeState(1);
+  }
+  if(key == 'h' || key == 'H'){
+    s.changeState(2);
+  }
+  if(key == 'e' || key == 'E'){
+    s.changeState(3);
+  }
+  if(key == 'p' || key == 'P'){
+    s.changeState(-1);
+  }
+}
+
+void serverEvent(Server someServer, Client someClient) {
+  s.addToBuffers("***New client connected: " + someClient.ip());
+}
+
+void stop(){
+  println("asdjkfl;asjdklfjasdklfjaskldjfl;as");
+  s.shutDownServer();
+  println("adfasdf");
+  super.stop();
+}
