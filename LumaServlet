@@ -1,0 +1,474 @@
+class LumaServlet {
+  //Processing's Server class. It internally
+  //Stores a queue of clients available with a message.
+  Server myServer;
+  
+  //Client o
+  Client client;
+  
+  //AltConThreader.
+  AltConThreader altCon;
+  //Int representing the previous size of altCon's command buffer.
+  int cci;
+
+  //Serial handlers.
+  Serial[] serials;
+
+  //The port the server is bound to.
+  int port;
+  
+  //The state of the server display.
+  //STATE KEY:
+  //-1:Splash screen. Nothing special this time. Just text. Big text.
+  //0: Standard, commands, and possibly connected ips.
+  //1: Connected ips only.
+  //2: Hardware connectivity.
+  int state;
+
+  //The PApplet parent to set the context of the Server object.
+  PApplet parent;
+  
+  //For loading the names of all the different banks. We can use this
+  //to provide more readable logs.
+  String[] bankNames;
+  String curBank;
+  //For loading the names of the patterns for the same reason...
+  String[] patNames;
+  String curPat;
+  //Also the preset names.
+  String[] presNames;
+  //And why not the channels?
+  String[] chanNames;
+  String curChan;
+  //AND EVEN general regions, because it exists.
+  String[] placeNames;
+  String curPlace;
+
+  //The most recent incoming message.
+  char[] message;
+
+  //String to pipe the incoming message into for error checking.
+  String uncheckedInput;
+
+  //Arraylist of interpreted recieved messages to display.
+  ArrayList toDisp;
+
+  //Arraylist of interpreted recieved message to write to log.
+  ArrayList toStore;
+
+  //Store the headers of each column in a single formatted string
+  //so that we can have perfect character column alignment.
+  String headers;
+  String acHeaders;
+  
+  //Just the string of dashes between the header and body of the output.
+  String divider;
+  
+  //String that is the text on the spash.
+  String splash;
+  String[] loadedSplashStrings;
+
+  //Number of commands to buffer between backup writes.
+  int backupRes;
+  int currentAmt;
+  
+  //Number of serials we need to use.
+  int numSerials;
+  
+  //Font that the server uses.
+  PFont serverFont;
+  //Size of the font.
+  float fontSize;
+  
+  //String that represents the message we want to add to the buffers.
+  String toAdd;
+  
+  //String that represents what we want to send out to the clients.
+  String toSend;
+  
+  //String representing the, well, time of last write.
+  String timeOfLastWrite;
+  
+  public LumaServlet(PApplet parent, int port, int backupRes, int numSerials, PFont serverFont, float fontSize){
+    //Start the program at the splash screen.
+    state = -1;
+    
+    //Load in all the things.
+    this.parent = parent;
+    this.numSerials = numSerials;
+    this.serverFont = serverFont;
+    this.fontSize = fontSize;
+    this.backupRes = backupRes;
+    
+    //Initialize the Alternate Connection Threader.
+    altCon = new AltConThreader(1535);
+    cci = 0;
+    
+    //Initialize the serial connection array.
+    serials = new Serial[numSerials];
+    String[] serialAddresses = Serial.list();
+    for(int i = 0; i < serials.length; i++){
+      //If numSerials is larger than the number of connected devices, we could have a problem.
+      try{
+        serials[i] = new Serial(parent, serialAddresses[i], 9600);
+      }
+      catch(Exception e){
+        toDisp.add("Connected devices in actuality number fewer than intended amount.");
+        toStore.add("Connected devices in actuality number fewer than intended amount.");
+      }
+    }
+    
+    //Initialize toAdd et. al.
+    toAdd = "";
+    toSend = "";
+    timeOfLastWrite = "";
+    
+    message = new char[9];
+    
+    //Load in the names of all the things from file.
+    bankNames = loadStrings("banks.lcf");
+    patNames = loadStrings("patterns.lcf");
+    presNames = loadStrings("presets.lcf");
+    chanNames = loadStrings("channels.lcf");
+    placeNames = loadStrings("places.lcf");   
+   
+    //Initialize the server object.
+    myServer = new Server(parent, port); 
+    
+    //Create the header text.
+    headers = String.format("%-6s|%-12s|%-12s|%-20s|%-38s|%-25s|%-25s|%-8s|%-12s|%-10s|%-10s|%-10s|%-10s", 
+    "Cmd#:", "mm-dd-yyyy:", "Time:", "Origin IP:", "Raw Command: ", "Place: ", "Bank: ", "Chan.:", "Pattern: ", 
+    "Param 1:", "Param 2:", "Param 3:", "Param 4"); 
+    //Create the acHeader.
+    acHeaders = String.format("%-6s|%-12s|%-12s|%-20s|%-25s|%-25s|%-8s|%-12s|%-10s|%-10s|%-10s|%-10s", 
+                          "Goon #", "MM-DD-YYYY", "Time", "Raw Message", "Place", "Bank", "Channel", "Pattern", "Param1", "Param2", "Param3", "Param4");
+    //Create the divider string.
+    divider = "========================================================"
+    +"================================================================="+
+    "=================================================================="+
+    "=====================";
+    
+    //Load the splash screen text.
+    splash = "";
+    loadedSplashStrings = loadStrings("splshstmt.awbt");
+    for(int i = 0; i < loadedSplashStrings.length; i++){
+      splash+= loadedSplashStrings[i]+"\n";
+    }
+    
+    //Set up the font.
+    textFont(serverFont, fontSize);
+    
+    
+  }
+  
+  public void addToBuffers(char[] message, String ip){
+    //Set curPlace to the place the command refers to.
+    curPlace = placeNames[(byte) message[1]/2];
+    
+    //Set curBank to the bank the command refers to.
+    curBank = bankNames[(byte) message[1]];
+    
+    //Ser curChan to the channel the command refers to.
+    curChan = chanNames[(byte) message[2]];
+    
+    //The current pattern is rather tricky. If we are using the 
+    //third channel the user selected a preset, so we need to get the 
+    //so-called pattern name from the presets' name bank.
+    if((byte)message[2] == 3){
+      curPat = presNames[(byte)message[3]];
+    } 
+    //Otherwise, just grab curPat from the pattern name bank.
+    else{
+      curPat = patNames[(byte)message[3]];
+    }
+    //This is a new command, so we need to increment the command counter.
+    currentAmt++;
+    
+    //Load in the parameter values.
+    int p1 = message[4], p2 = message[5], p3 = message[6], p4 = message[7];
+    String intMessage = "";
+    for(int i = 0; i<message.length; i++){
+      intMessage+=(int)message[i]+"-";
+    }
+    
+    //Create the server's buffers' entry. Uses the same format as the header for text alignment.
+    toAdd = String.format("%-6s|%-12s|%-12s|%-20s|%-38s|%-25s|%-25s|%-8s|%-12s|%-10s|%-10s|%-10s|%-10s", 
+                          currentAmt, day()+"-"+month()+"-"+year(), hour()+":"+minute()+":"+second()+"."+(millis()%1000), 
+                          ip, intMessage, curPlace, curBank, curChan, curPat, p1, p2, p3, p4);
+                          
+    //We want to send the clients a more human readable message, so, well, here it is.
+    toSend = "IP: "+ip+" just set the "+curChan+" to "+curPat+" with the parameters ["+p1+","+p2+","+p3+","+p4+"]";
+    
+    //Add the server's message to the server's buffers.
+    toDisp.add(toAdd);
+    toStore.add(toAdd);
+    
+    try{
+      //Remember that this is all built around a java server socket, so we can write to all the clients.
+      //This is where we write out our simpler message.
+      myServer.write(toSend);
+    }
+    catch(Exception e){
+      //If we can't send it out for some reason, send that to the buffers. It's probably rather serious.
+      toDisp.add("Error sending message #"+currentAmt);
+      toStore.add("Error sending message #"+currentAmt);
+    }
+    
+    //Alright, if toStore's size is greater than the backup resolution,
+    //save the current toStore buffer and then clear out.
+    if(toStore.size()%backupRes == 0){
+      //Give some labels to that saucy bitch. (Emt parody)
+      toStore.add(0, headers);
+      toStore.add(1, divider);
+      //Save the file.
+      saveStrings("log"+month()+":"+day()+":"+year()+":"+hour()+":"+minute()+":"+second()+"."+(millis()%1000)+".llf", (String[])toStore.toArray());
+      //reset the buffer.
+      toStore = new ArrayList();
+      //Set timeOfLastWrite.
+      timeOfLastWrite = month()+":"+day()+":"+year()+":"+hour()+":"+minute()+":"+second()+"."+(millis()%1000);
+    }
+  }
+  
+  //This second addToBuffers puts customized messages in the buffer.
+  public void addToBuffers(String custMessage){
+    //Put the string all up in that mess. 
+    toDisp.add(custMessage);
+    toStore.add(custMessage);
+    //Fuckin' smart.
+    try{
+      //Remember that this is all built around a java server socket, so we can write to all the clients.
+      //This is where we write out our simpler message.
+      myServer.write(custMessage);
+    }
+    catch(Exception e){
+      //If we can't send it out for some reason, send that to the buffers. It's probably rather serious.
+      toDisp.add("Error sending message #"+currentAmt);
+      toStore.add("Error sending message #"+currentAmt);
+    }    
+  }
+  
+  //This changes the state. Since we are using keyboard input, it
+  //is VERY OH MY GOD wise to use one of Processing's few callback functions.
+  //Hence in that callback function we call this method, instead of editing
+  //state by virtue of key press in handle().
+  public void changeState(int newState){
+    //Don't want to go out of bounds do we?
+    if(newState >= -1 && newState <= 3){
+      state = newState;
+    }
+  }
+
+
+  //Handles the server. 
+  public void handle() {
+    
+    //For every connected client, if the client has a message, read that message.
+    Client current = myServer.available();
+
+    if (current != null) {
+      //If the current client is not null, and hence says something, load that shit into the 
+      //signal value.
+      uncheckedInput = current.readString();
+      println("current.readString();");
+
+      //Check several parameters about the incoming message.
+      if (uncheckedInput.length() >= 9) {//Is the string the minimum length possible for a message?
+        print("a: ");
+        char[] input = new char[9];
+        for(int i = 0; i < 9; i++){
+          input[i] = uncheckedInput.charAt(i);
+        }
+        for(int i = 0; i < input.length; i++){
+          
+          println(i+": "+(int)input[i]);
+        }
+        if(true){//if (uncheckedInput.charAt(0) == (char)63 || uncheckedInput.charAt(0) == (char)153) {//Is the first character a correct continuity byte?
+          print("b: ");
+          int checksuma = (int)uncheckedInput.charAt(8); //Load in the 9th character, the checksum value.
+          char[] testChecksum = uncheckedInput.toCharArray();//Load all the characters of the string into an array.
+          int checksumb = 0; //Integer to hold the calculated checksum.
+          //Get the intDiv'd average of the first 8 bytes (chars) of the array. 
+          testChecksum[0] = 153;
+          for (int i = 0; i < 8; i++) {
+            checksumb += (int)testChecksum[i];
+          }
+          //Do the dividing. Double typecast for insecurity.
+          checksumb = (int)checksumb / (int)8;
+          if (true) {//If the checksum value supplied matches our calculated one,
+          print("c: ");
+            //Transfer the first 9 values of testChecksum into message.
+            for (int i = 0; i < message.length; i++) {
+              message[i] = testChecksum[i];
+            }
+            //Now we have a completed and valid message to send to the arduino.
+            //So let's do exactly that.
+            int sPort = message[2]/2;//Since each serial port has two banks, the correct port is the integer div'd  orig. bank.
+            int bankToUse = message[2]%2; //Two banks per serial port. This is how we choose which one.
+            //Convert the char array to a byte array.
+            byte[] byteMessage = new byte[message.length];
+            for(int i = 0; i < byteMessage.length; i++){
+              byteMessage[i] = (byte)message[i];
+            }
+            println("Writing to serial:");
+            serials[message[2]%numSerials].write(byteMessage);
+            //Also, let's send off message to get added into the buffers.
+            addToBuffers(message, current.ip());
+          }
+        }
+      }
+    }
+    
+    //We also need to handle altCon's commands.
+    if(altCon.commands.size() > cci){
+      char[] altConCommand = (char[])altCon.commands.get(cci);
+      byte[] byteMessage = new byte[9];
+      for(int i = 0; i < altConCommand.length; i++){
+        byteMessage[i] = (byte)altConCommand[i];
+      }
+      serials[message[2]%numSerials].write(byteMessage);
+      cci = altCon.commands.size();
+      println("AltCon's command was sent to serial.");
+    }
+    drawServer();
+  }
+  
+  public void drawServer(){
+    //Black bg.
+    background(0);
+    switch(state){
+      //Show the splash screen. Everything is still handled as if the server was running
+      //in other states; it's just covered up.
+      case -1:
+        colorMode(HSB);
+        fill(255*sq(sin(frameCount*.01)), 255, 255); //LAYIN' DOWN THE GAUNTLET.
+        text(splash, 30, 30);
+        break;
+        
+      //Show log + ips.
+      case 0:
+        //Green.
+        colorMode(RGB);
+        fill(0, 255, 0);
+        
+        //First, let's just get all the text out of the way.
+        text(headers, 5, 30);
+        text(divider, 5, 40);
+        //Trim on screen log.
+        while(toDisp.size() > (height-30)/fontSize){
+          toDisp.remove(0);
+        }
+        for(int i = 0; i < toDisp.size(); i++){
+          text((String)toDisp.get(i), 5, 50+(i*10));
+        }
+        
+        //In addition, let's draw the connected ips to the right
+        //of the screen, if the screen is sufficiently large.
+        if(width>1500){
+          //Label.
+          text(String.format("%20s","Connected IPs:"), width-150, 30);
+          //Divider. I counted this time 20's not a very high number.
+          text("--------------------", width-150, 40);
+          //Meat: the connected ips.
+          for(int i = 0; i < myServer.clientCount; i++){
+            text(myServer.clients[i].ip(), width-150, 50+(10*i));
+          }
+        }
+        break;
+      
+      //Draw just the IPs.
+      case 1:
+        //Yellow.
+        colorMode(RGB);
+        fill(255, 255, 0);
+        
+        //Label.
+        text(String.format("%20s","Connected IPs:"), 10, 30);
+        //Divider. I counted this time. 20's not a very high number.
+        text("--------------------", 5, 40);
+        //Meat: the connected ips.
+        for(int i = 0; i < myServer.clientCount; i++){
+          text(myServer.clients[i].ip(), 5, 50+(10*i));
+        }
+        break;
+      
+      //Screen used for the AltConThreader stuff.
+      case 2:
+        //Light blue.
+        colorMode(RGB);
+        fill(100, 100, 255);
+        
+        //First, let's just get all the text out of the way.
+        text(acHeaders, 5, 30);
+        text(divider, 5, 40);
+        //Trim on screen log.
+        while(altCon.events.size() > (height-30)/fontSize){
+          altCon.events.remove(0);
+        }
+        //Draw on screen log.
+        for(int i = 0; i < altCon.events.size(); i++){
+          text((String)altCon.events.get(i), 5, 50+(i*10));
+        }
+        
+        //In addition, let's draw the running goons to the right
+        //of the screen, if the screen is sufficiently large.
+        if(width>1350){
+          //Label.
+          text(String.format("%20s","Running Goons:"), width-150, 30);
+          //Divider. I counted this time 20's not a very high number.
+          text("--------------------", width-150, 40);
+          //Meat: the connected ips.
+          for(int i = 0; i < altCon.goons.size(); i++){
+            AltConThread temp = (AltConThread)altCon.goons.get(i);
+            text(temp.id, width-150, 50+(10*i));
+          }
+        }
+        break;
+      
+      //Draw various reports.
+      case 3:
+        //Teal.
+        colorMode(RGB);
+        fill(0, 255, 255);
+        
+        //ARDUINO BINDINGS.
+        //Label:
+        text("Place-to-Serial Bindings:", 5, 30);
+        //Divider:
+        text("----------------------------------------", 5, 40);
+        for(int i = 0; i < placeNames.length; i++){
+          try{
+            text(String.format("%20s:%-20s", placeNames[i], serials[i].port), 10, 50+(10*i));
+          }
+          catch(Exception e){
+            text(String.format("%20s:%-20s", placeNames[i], "NO CONNECTION."), 10, 50+(10*i)); 
+          }
+        }
+
+        //COMMANDS SINCE STARTUP.
+        text("COMMANDS SINCE STARTUP: "+currentAmt, width-300, 30);
+        //TIME OF LAST WRITE.
+        text("TIME OF LAST LOG WRITE: "+timeOfLastWrite, width-300, 40);
+        break;
+        
+    }
+  }
+  
+  //Call this when closing the program.
+  public void shutDownServer(){
+    //Shut down the server object.
+    myServer.stop();
+
+    //Shut down the serial connections.
+    for(int i = 0; i < serials.length; i++){
+      serials[i].stop();
+    }
+    
+    //Shut down altConThread.
+    try{
+      //altCon.end();
+    }
+    catch(Exception e){
+      //oh well.
+    }
+  }
+}
