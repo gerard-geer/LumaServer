@@ -1,0 +1,121 @@
+class AltConThreader extends Thread{   
+  //Boolean representing whether or not
+  //the socket was created. If not created,
+  //The thread terminates immediately.
+  boolean running;
+  
+  //ArrayList of events that happen on this thread.
+  ArrayList events;
+  
+  //ArrayList of individual connection threads.
+  ArrayList goons;
+  
+  //ArrayList of commands.
+  ArrayList commands;
+  //Current command index.
+  int cci;
+  
+  //Port to listen on.
+  int port;
+  
+  //Current id.
+  int id;
+  
+  //For loading the names of all the different banks. We can use this
+  //to provide more readable logs.
+  String[] bankNames;
+  String curBank;
+  //For loading the names of the patterns for the same reason...
+  String[] patNames;
+  String curPat;
+  //Also the preset names.
+  String[] presNames;
+  //And why not the channels?
+  String[] chanNames;
+  String curChan;
+  //AND EVEN general regions, because it exists.
+  String[] placeNames;
+  String curPlace;
+  
+  public AltConThreader(int port){
+    super("AltConThread");
+    running = true;
+    this.port = port;
+    id = 0;
+    
+    //Load all the things.
+    bankNames = loadStrings("banks.lcf");
+    patNames = loadStrings("patterns.lcf");
+    presNames = loadStrings("presets.lcf");
+    chanNames = loadStrings("channels.lcf");
+    placeNames = loadStrings("places.lcf");
+    goons = new ArrayList();
+    events = new ArrayList();
+    commands = new ArrayList();
+    
+    //Start the thread.
+    start();
+    
+  }
+  
+  //Stop the thread.
+  public void end(){
+    running = false;
+    super.stop();
+    for(int i = 0; i < goons.size(); i++){
+        AltConThread temp = (AltConThread)goons.get(i);
+        temp.end();
+    }
+  }
+  
+  //Get the events list.
+  public ArrayList peekEvents(){
+    return events;
+  }
+  
+  //Dump the events list.
+  public ArrayList getEvents(){
+    ArrayList temp = events;
+    events = new ArrayList();
+    return temp;
+  }
+    
+  
+  public void run(){
+    //Failsafe notification.
+    System.out.println("AltConThreader started.");
+    events.add(String.format(" ***Date-> %2s-%2s-%4s Time-> %2s:%2s:%2s:%4s !!!AltConThreader started!!!", month(), day(), year(), hour(), minute(), second(), millis()%1000));
+    while(running){
+      //Accept a new connection when it occurs.
+      try{
+        ServerSocket secretary = new ServerSocket(port, 10);
+        System.out.println("Secretary created.");
+        
+        //Put the connection in its own thread, with it's id and a reference to events so that it can report things.
+        AltConThread goon = new AltConThread(secretary.accept(), id, events, commands, bankNames, patNames, presNames, chanNames, placeNames);
+        //Add the occurence to events.
+        events.add(String.format(" ***Date-> %2s-%2s-%4s Time-> %2s:%2s:%2s:%4s new client connected. ID=" + id, month(), day(), year(), hour(), minute(), second(), millis()%1000));
+        System.out.println("AltConThread made a new goon!");
+        goon.begin();
+        goons.add(goon);
+        System.out.println("goon started.");
+        id++;
+        for(int i = 0; i < goons.size(); i++){
+          AltConThread temp = (AltConThread)goons.get(i);
+          if(!temp.alive()){
+            goons.remove(i);
+          }
+        }
+      }
+      catch(IOException e){
+        System.out.println("Could not create secretary socket.");
+      }
+      System.out.println(commands.size());
+    }
+    //Failsafe notification.
+    System.out.println("AltConThreader thread stopped. No further connections will be handled.");
+    events.add("AltConThreader thread stopped.");
+    events.add("No further alternate connections will be handled.");
+  }
+}
+      
