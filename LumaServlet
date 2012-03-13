@@ -263,6 +263,11 @@ class LumaServlet {
   public void handle() {
     
     //For every connected client, if the client has a message, read that message.
+    //One client is handled per call to handle. The connected clients are stored in a
+    //queue.
+    //This is essentially the same algorithm used in the Processing "Server" example,
+    //but since the method outlined in that example is the best and cleanest approach,
+    //it was only orderly that I used its general premise.(And a similar style.)
     Client current = myServer.available();
 
     if (current != null) {
@@ -332,6 +337,7 @@ class LumaServlet {
     drawServer();
   }
   
+  //Draws the server. This is where the screen differences are made apparent.
   public void drawServer(){
     //Black bg.
     background(0);
